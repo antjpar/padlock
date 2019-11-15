@@ -1,0 +1,33 @@
+{
+  "name": "@padloc/core",
+  "version": "3.0.10",
+  "description": "padloc core module",
+  "main": "index.js",
+  "author": "Martin Kleinschrodt <martin@maklesoft.com>",
+  "license": "GPLv3",
+  "files": [
+    "src",
+    "vendor",
+    "tsconfig.json"
+  ],
+  "dependencies": {
+    "@padloc/locale": "^3.0.6"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.1.7",
+    "@types/mocha": "^5.2.5",
+    "chai": "^4.2.0",
+    "mocha": "^5.2.0",
+    "ts-node": "^7.0.1",
+    "typedoc": "^0.15.0"
+  },
+  "scripts": {
+    "test": "cd test && mocha -r ts-node/register *.ts",
+    "docs": "typedoc --out docs"
+  },
+  "repository": {
+    "type" : "git",
+    "url" : "https://github.com/padloc/padloc.git",
+    "directory": "packages/core"
+  }
+}

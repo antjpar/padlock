@@ -1,133 +1,80 @@
-# Padlock
-A minimal open source password manager.
+# Padloc
 
-**If you just want to use the app, we recommend downloading one of the [official releases](https://github.com/maklesoft/padlock/releases).**
+Simple, secure password and data management for individuals and teams (formerly known as Padlock).
 
-However, if you want to get your hands dirty and contribute or build your own version from source, read on!
+This repo is split into multiple packages:
+
+| Package Name                          | Description                                                                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| [@padloc/core](packages/core)         | Core Logic                                                                                                                                |
+| [@padloc/app](packages/app)           | Web-based UI components                                                                                                                   |
+| [@padloc/server](packages/server)     | The Backend Server                                                                                                                        |
+| [@padloc/pwa](packages/pwa)           | The Web Client, a [Progressive Web App](https://developers.google.com/web/progressive-web-apps) built on top of the `@padloc/app` package |
+| [@padloc/locale](packages/locale)     | Package containing translations and other localization-related things                                                                     |
+| [@padloc/electron](packages/electron) | The Desktop App, built with Electron                                                                                                      |
+| [@padloc/cordova](packages/cordova)   | Cordova project for building iOS and Android app.                                                                                         |
 
 ## Getting Started
 
-1. First, you'll need [Node.js and npm](http://nodejs.org/). Install it if you haven't yet.
-2. Clone or download the source code. E.g.:
-    ```sh
-    git clone git@github.com:MaKleSoft/padlock.git
-    ```
-3. Install the local dependencies.
-    ```sh
-    cd padlock
-    npm install
-    ```
+#### Step 0: Install Prerequisites
 
-## Start The App
+You'll need
+
+-   [node.js](https://nodejs.org/) v12 or greater
+-   [Git](https://git-scm.com/)
+
+#### Step 1: Clone the Repo
 
 ```sh
-npm run app
+git clone https://github.com/padloc/padloc
+cd padloc
 ```
 
-You can also run the app in debug mode:
+#### Step 2: Install Dependencies
 
 ```sh
-npm run app -- --debug
+npm install
 ```
 
-## Compiling TypeScript files
-
-The core logic (everything under `app/src/core`) is implement in TypeScript, which needs to be compiled to
-JavaScript before running the app. This happens automatically when you run `npm install`. You can also run the
-compilation step individually in case you want to make any changes to the core:
+#### Step 3: Start Server and Web Client
 
 ```sh
-npm run compile
+PL_DATA_DIR=~/padloc-data \
+PL_SERVER_PORT=3000 \
+PL_PWA_PORT=8080 \
+npm run start
 ```
 
-To watch files and compile automatically:
+For more configuration options, see [Configuration](#configuration)
 
-```sh
-npm run compile -- --watch
-```
+## Scripts
 
-## Testing / Linting
+| Command                | Description                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm start`            | Starts both backend server and web client.                                                                                                                        |
+| `npm run server:start` | Starts only backend server.                                                                                                                                       |
+| `npm run pwa:start`    | Starts only web client (You'll need to run `npm run pwa:build` first).                                                                                            |
+| `npm run pwa:build`    | Builds the web client                                                                                                                                             |
+| `npm run dev`          | Starts backend server and client app in dev mode, which watches for changes in the source files and automatically rebuilds/restarts the corresponding components. |
+| `npm test`             | Run tests.                                                                                                                                                        |
 
-To lint JavaScript files:
+## Configuration
 
-```
-npm run lint
-```
+| Environment Variable | Default                          | Description                                                                                               |
+| -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `PL_SERVER_PORT`     | `3000`                           | Which port to host the backend server on                                                                  |
+| `PL_SERVER_URL`      | `http://0.0.0.0:$PL_SERVER_PORT` | Public URL that will resolve to the backend server. Used by clients to send requests.                     |
+| `PL_PWA_PORT`        | `8080`                           | Which port to host the web client on                                                                      |
+| `PL_PWA_URL`         | `http://0.0.0.0:$PL_PWA_PORT`    | Public URL that will resolve to the web client. Used by the server to generate links into the web client. |
+| `PL_PWA_DIR`         | `./packages/pwa/dist`            | Build directory for web client.                                                                           |
+| `PL_DATA_DIR`        | `./data`                         | Directory used by server for persistent data storage                                                      |
+| `PL_ATTACHMENTS_DIR` | `./attachments`                  | Directory used by server to store attachments                                                             |
+| `PL_EMAIL_USER`      | -                                | SMTP user for sending emails.                                                                             |
+| `PL_EMAIL_SERVER`    | -                                | SMTP server for sending emails                                                                            |
+| `PL_EMAIL_PORT`      | -                                | SMTP port for sending emails                                                                              |
+| `PL_EMAIL_PASSWORD`  | -                                | SMTP password for sending email                                                                           |
+| `PL_REPORT_ERRORS`   | -                                | Email address used for reporting unexpected errors in the backend.                                        |
 
-To run tests:
+## Security
 
-```sh
-npm run test
-```
-
-**Note:** The `npm run test` command uses headless Chrome, which means need to have
-Google Chrome 59 or higher installed.
-
-Alternatively, you can also run the tests in "visual mode":
-
-```sh
-npm run app -- --test
-```
-
-**Another Note:** For synchronization-related tests to pass, you need to have a padlock-cloud server running
-in test mode. E.g.:
-
-```sh
-padlock-cloud --test &! npm run test
-```
-
-Details on how to install Padlock Cloud can be found [here](https://github.com/maklesoft/padlock-cloud#how-to-installbuild).
-
-## Building for Desktop
-
-To create a production build of the app for OSX, Windows or Linux, run:
-
-```sh
-npm run build:[platform]
-```
-
-Where platform is one of `mac`, `win`, or `linux`. E.g: To build the app for OSX:
-
-```sh
-npm run build:mac
-```
-
-This will generate a set of distrution-ready files under the `dist` directory.
-
-**Note:** In order to build the app for Linux, you'll need to install icnsutils and graphicsmagick.
-
-```sh
-sudo apt install graphicsmagick icnsutils
-```
-
-## Building for Mobile
-
-Apache Cordova is used to distribute Padlock on iOS and Android. The `cordova` subdirectory contains a
-Cordova project with all appropriate configuration files and resources. The Cordova cli can be used to
-build and run the app on iOS and Android devices or emulators. All Cordova commands need to be run from
-the `cordova` subdirectory. Before running any commands like `cordova build`, make sure to run
-`cordova prepare` once (after the first time you can omit it). For example, to run the app on an iOS device
-or emulator:
-
-```sh
-cd cordova
-cordova prepare
-cordova run ios
-```
-
-See the [Apache Cordova documentation](http://cordova.apache.org/docs/en/latest/) for details.
-
-**Note:** In order to build the app for Android, you'll need to install and setup the Android SDK.
-Building for iOS is only possible on OSX and requires XCode.
-
-## Contributing
-Contributions are more than welcome!
-
-- If you want to report a bug or suggest a new feauture, you can do so in the [issues section](https://github.com/MaKleSoft/padlock/issues)
-- If you want to contribute directly by committing changes, please follow the usual steps:
-    1. Fork the repo
-    2. Create your feature branch: git checkout -b my-feature-branch
-    3. Make sure to lint and test your code before you commit! (`npm run lint && npm run test`)
-    4. Commit your changes: `git commit -m 'Some meaningful commit message'`
-    5. Push to the branch: `git push origin my-feature-branch`
-    6. Submit a pull request!
+For a security design overview, check out the [security whitepaper](security.md).
