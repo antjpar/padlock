@@ -105,7 +105,8 @@ export class Menu extends StateMixin(BaseElement) {
                 font-size: 90%;
             }
 
-            .favorites {
+            .favorites,
+            .host {
                 --color-highlight: var(--color-negative);
                 --color-foreground: var(--color-tertiary);
             }
@@ -221,12 +222,6 @@ export class Menu extends StateMixin(BaseElement) {
         }
 
         const accId = (app.account && app.account.id) || "";
-        const canUpgrade =
-            app.account &&
-            app.billingConfig &&
-            (!app.account.billing ||
-                !app.account.billing.subscription ||
-                app.account.billing.subscription.plan.type === PlanType.Free);
 
         const itemsQuota = app.getItemsQuota();
 
@@ -241,17 +236,29 @@ export class Menu extends StateMixin(BaseElement) {
             return [...vault.items].reduce((c, item) => (item.attachments.length ? c + 1 : c), count);
         }, 0);
 
+        const tags = app.state.tags;
+
         const recentThreshold = new Date(Date.now() - app.settings.recentLimit * 24 * 60 * 60 * 1000);
         const recentCount = app.vaults.reduce((count, vault) => {
             return [...vault.items].reduce((c, item) => (item.lastUsed > recentThreshold ? c + 1 : c), count);
         }, 0);
 
+        const hostCount = this.state.currentHost ? this.app.getItemsForHost(this.state.currentHost).length : 0;
+
         const showSettingsWarning =
-            app.billingConfig &&
+            app.billingEnabled &&
             app.account &&
             app.account.billing &&
             (!app.account.billing.subscription ||
                 app.account.billing.subscription.status === SubscriptionStatus.Inactive);
+
+        const showUpgradeButton =
+            app.account &&
+            app.billingEnabled &&
+            (!app.account.billing ||
+                !app.account.billing.subscription ||
+                app.account.billing.subscription.plan.type === PlanType.Free) &&
+            itemsQuota !== -1;
 
         return html`
             <div class="scroller">
@@ -265,6 +272,19 @@ export class Menu extends StateMixin(BaseElement) {
                             <pl-icon icon="list"></pl-icon>
 
                             <div>${$l("Items")}</div>
+                        </li>
+
+                        <li
+                            class="sub-item tap favorites"
+                            @click=${() => this._goTo("items", { host: true })}
+                            ?selected=${this.selected === "host"}
+                            ?hidden=${!hostCount}
+                        >
+                            <pl-icon icon="web"></pl-icon>
+
+                            <div>${this.app.state.currentHost}</div>
+
+                            <div class="detail">${hostCount}</div>
                         </li>
 
                         <li
@@ -348,9 +368,9 @@ export class Menu extends StateMixin(BaseElement) {
                             `;
                         })}
 
-                        <div class="subsection">
+                        <div class="subsection" ?hidden=${!tags.length}>
                             <div class="subsection-header">${$l("Tags")}</div>
-                            ${app.state.tags.map(
+                            ${tags.map(
                                 ([tag, count]) => html`
                                     <li
                                         class="sub-item tap"
@@ -418,7 +438,7 @@ export class Menu extends StateMixin(BaseElement) {
                             <pl-icon class="warning-icon" icon="error" ?hidden=${!showSettingsWarning}></pl-icon>
                         </li>
 
-                        <li class="get-premium tap" @click=${this._getPremium} ?hidden=${!canUpgrade}>
+                        <li class="get-premium tap" @click=${this._getPremium} ?hidden=${!showUpgradeButton}>
                             <pl-icon icon="favorite"></pl-icon>
 
                             <div>${$l("Get Premium")}</div>

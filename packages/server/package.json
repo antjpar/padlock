@@ -1,11 +1,11 @@
 {
   "name": "@padloc/server",
-  "version": "3.0.10",
+  "version": "3.0.13",
   "description": "Padloc server component",
   "private": true,
   "files": [
-	"src",
-	"tsconfig.json"
+    "src",
+    "tsconfig.json"
   ],
   "main": "index.js",
   "author": "Martin Kleinschrodt <martin@maklesoft.com>",
@@ -15,11 +15,13 @@
     "typescript": "^3.3.3333"
   },
   "dependencies": {
+    "@padloc/core": "^3.0.13",
+    "@padloc/locale": "^3.0.13",
     "@types/fs-extra": "^5.0.4",
     "@types/nodemailer": "^4.6.2",
     "@types/stripe": "^6.26.5",
-    "@padloc/core": "^3.0.10",
-    "@padloc/locale": "^3.0.6",
+    "ansi-colors": "^4.1.1",
+    "date-fns": "^2.5.0",
     "fs-extra": "^7.0.1",
     "level": "^5.0.1",
     "nodemailer": "^4.6.7",
@@ -28,11 +30,12 @@
   },
   "scripts": {
     "start": "ts-node src/init.ts",
+    "repl": "ts-node src/init-repl-client.ts",
     "dev": "ts-node-dev src/init.ts"
   },
   "repository": {
-    "type" : "git",
-    "url" : "https://github.com/padloc/padloc.git",
+    "type": "git",
+    "url": "https://github.com/padloc/padloc.git",
     "directory": "packages/server"
   }
 }

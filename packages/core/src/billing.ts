@@ -166,10 +166,6 @@ export class BillingAddress extends Serializable {
 export class Discount extends Serializable {
     name = "";
     coupon = "";
-
-    validate() {
-        return typeof this.name === "string" && typeof this.coupon === "string";
-    }
 }
 
 export class BillingInfo extends Serializable {
@@ -197,10 +193,12 @@ export class BillingInfo extends Serializable {
 }
 
 export class UpdateBillingParams extends Serializable {
+    provider: string = "";
     account?: AccountID;
     org?: OrgID;
     email?: string;
     plan?: string;
+    planType?: PlanType;
     members?: number;
     paymentMethod?: { name: string } & any;
     address?: BillingAddress;
@@ -214,12 +212,14 @@ export class UpdateBillingParams extends Serializable {
         }
     }
 
-    fromRaw({ account, email, org, plan, members, paymentMethod, coupon, address, cancel }: any) {
+    fromRaw({ provider, account, email, org, plan, planType, members, paymentMethod, coupon, address, cancel }: any) {
         return super.fromRaw({
+            provider,
             email,
             account,
             org,
             plan,
+            planType,
             members,
             paymentMethod,
             coupon,
@@ -242,10 +242,26 @@ export class UpdateBillingParams extends Serializable {
     }
 }
 
+export class BillingProviderInfo extends Serializable {
+    type: string = "";
+    plans: Plan[] = [];
+    config: {
+        [param: string]: string;
+    } = {};
+
+    fromRaw({ type, plans, config }: any) {
+        return super.fromRaw({
+            type,
+            config,
+            plans: plans.map((plan: any) => new Plan().fromRaw(plan))
+        });
+    }
+}
+
 export interface BillingProvider {
     update(params: UpdateBillingParams): Promise<void>;
     delete(billingInfo: BillingInfo): Promise<void>;
-    getPlans(): Promise<Plan[]>;
+    getInfo(): BillingProviderInfo;
 }
 //
 // const stubPlans: Plan[] = [

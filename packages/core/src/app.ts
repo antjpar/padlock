@@ -1,6 +1,6 @@
 import { loadLanguage } from "@padloc/locale/src/translate";
 import { Storage, Storable } from "./storage";
-import { Serializable, bytesToBase64, base64ToBytes } from "./encoding";
+import { Serializable, bytesToBase64, base64ToBytes, stringToBytes } from "./encoding";
 import { Invite, InvitePurpose } from "./invite";
 import { Vault, VaultID } from "./vault";
 import { Org, OrgID, OrgType, OrgMember, OrgRole, Group } from "./org";
@@ -32,15 +32,16 @@ import {
     keyStoreSet,
     keyStoreGet,
     keyStoreDelete,
-    getCryptoProvider
+    getCryptoProvider,
+    getStorage
 } from "./platform";
 import { uuid } from "./util";
 import { Client as SRPClient } from "./srp";
 import { Err, ErrorCode } from "./error";
 import { Attachment, AttachmentInfo } from "./attachment";
-import { UpdateBillingParams } from "./billing";
+import { BillingProviderInfo, UpdateBillingParams } from "./billing";
 import { SimpleContainer } from "./container";
-import { AESKeyParams } from "./crypto";
+import { AESKeyParams, PBKDF2Params } from "./crypto";
 
 /** Various usage stats */
 export class Stats extends Serializable {
@@ -65,6 +66,74 @@ export class Settings extends Serializable {
     syncInterval: number = 1;
     /** Time threshold used for filtering "recent" items, in days */
     recentLimit: number = 7;
+}
+
+export interface HashedItem {
+    hosts: string[];
+}
+
+export class Index extends Serializable {
+    hashParams = new PBKDF2Params({ iterations: 1 });
+    items: HashedItem[] = [];
+
+    fromRaw({ hashParams, items }: any) {
+        this.hashParams.fromRaw(hashParams);
+        this.items = items;
+        return this;
+    }
+
+    async fromItems(items: VaultItem[]) {
+        const crypto = getCryptoProvider();
+
+        if (!this.hashParams.salt.length) {
+            this.hashParams.salt = await crypto.randomBytes(16);
+        }
+
+        this.items = (
+            await Promise.all(
+                items.map(async item => ({
+                    hosts: (
+                        await Promise.all(
+                            item.fields
+                                .filter(f => f.type === "url")
+                                .map(async f => {
+                                    // try to parse host from url. if url is not valid,
+                                    // assume the url field contains just the domain.
+                                    let host = f.value;
+                                    try {
+                                        host = new URL(f.value).host;
+                                    } catch (e) {}
+                                    const hashedHost = await crypto.deriveKey(stringToBytes(host), this.hashParams);
+                                    return bytesToBase64(hashedHost);
+                                })
+                        )
+                    ).filter(h => h !== null) as string[]
+                }))
+            )
+        ).filter(item => item.hosts.length);
+    }
+
+    async matchHost(host: string) {
+        const hashedHost = bytesToBase64(await getCryptoProvider().deriveKey(stringToBytes(host), this.hashParams));
+        return this.items.filter(item => item.hosts.some(h => h === hashedHost)).length;
+    }
+
+    async fuzzyMatchHost(host: string) {
+        // Try exact match first, then try to add/remove "www."
+        return (
+            (await this.matchHost(host)) ||
+            (host.startsWith("www.") ? this.matchHost(host.slice(4)) : this.matchHost("www." + host))
+        );
+    }
+
+    async matchUrl(url: string) {
+        try {
+            const { host } = new URL(url);
+            return this.fuzzyMatchHost(host);
+        } catch (e) {
+            return 0;
+        }
+    }
 }
 
 /** Application state */
@@ -100,6 +169,12 @@ export class AppState extends Storable {
 
     rememberedMasterKey: SimpleContainer | null = null;
 
+    billingProvider: BillingProviderInfo | null = null;
+
+    currentHost: string = "";
+
+    index = new Index();
+
     _errors: Err[] = [];
 
     /** All [[Tag]]s found within the users [[Vault]]s */
@@ -131,7 +206,18 @@ export class AppState extends Storable {
         return !!this.session;
     }
 
-    fromRaw({ settings, stats, device, session, account, orgs, vaults, rememberedMasterKey }: any) {
+    fromRaw({
+        settings,
+        stats,
+        device,
+        session,
+        account,
+        orgs,
+        vaults,
+        rememberedMasterKey,
+        billingProvider,
+        index
+    }: any) {
         this.settings.fromRaw(settings);
         this.stats.fromRaw(stats);
         this.device.fromRaw(device);
@@ -140,13 +226,12 @@ export class AppState extends Storable {
         this.orgs = orgs.map((org: any) => new Org().fromRaw(org));
         this.vaults = vaults.map((vault: any) => new Vault().fromRaw(vault));
         this.rememberedMasterKey = rememberedMasterKey && new SimpleContainer().fromRaw(rememberedMasterKey);
+        this.billingProvider = billingProvider && new BillingProviderInfo().fromRaw(billingProvider);
+        if (index) {
+            this.index.fromRaw(index);
+        }
         return this;
     }
-}
-
-export interface BillingConfig {
-    stripePublicKey: string;
-    disablePayment: boolean;
 }
 
 /**
@@ -216,21 +301,23 @@ export class App {
     state = new AppState();
 
     /** Promise that is resolved when the app has been fully loaded */
-    loaded = this.load();
+    loaded: Promise<void>;
+
+    storage: Storage;
 
     constructor(
-        /** Persistent storage provider */
-        public storage: Storage,
         /** Data transport provider */
         sender: Sender,
-        public billingConfig?: BillingConfig
+        storage = getStorage()
     ) {
+        this.storage = storage;
         this.api = new Client(this.state, sender, (_req, _res, err) => {
             const online = !err || err.code !== ErrorCode.FAILED_CONNECTION;
             if (online !== this.state.online) {
                 this.setState({ online });
             }
         });
+        this.loaded = this.load();
     }
 
     /** Promise that resolves once all current synchronization processes are complete */
@@ -280,6 +367,10 @@ export class App {
         return !!this.state.rememberedMasterKey;
     }
 
+    get billingEnabled() {
+        return !!this.state.billingProvider && !(this.state.account && this.state.account.billingDisabled);
+    }
+
     private _queuedSyncPromises = new Map<string, Promise<void>>();
     private _activeSyncPromises = new Map<string, Promise<void>>();
 
@@ -290,6 +381,10 @@ export class App {
     /** Save application state to persistent storage */
     async save() {
         await this.loaded;
+        if (!this.state.locked) {
+            await this.state.index.fromItems(this.state.vaults.flatMap(v => [...v.items]));
+        }
+
         await this.storage.save(this.state);
     }
 
@@ -318,13 +413,18 @@ export class App {
         // Save back to storage
         await this.storage.save(this.state);
 
-        // Try syncing account so user can unlock with new password in case it has changed
-        if (this.account) {
-            this.fetchAccount();
-        }
+        this.loadBillingProvider();
 
         // Notify state change
         this.publish();
+    }
+
+    async reload() {
+        const masterKey = this.account && this.account.masterKey;
+        await this.load();
+        if (masterKey) {
+            await this.unlockWithMasterKey(masterKey);
+        }
     }
 
     /**
@@ -550,7 +650,8 @@ export class App {
             account: null,
             session: null,
             vaults: [],
-            orgs: []
+            orgs: [],
+            index: new Index()
         });
         await this.save();
     }
@@ -763,7 +864,9 @@ export class App {
     }
 
     async forgetMasterKey() {
-        keyStoreDelete("master_key_encryption_key");
+        try {
+            await keyStoreDelete("master_key_encryption_key");
+        } catch (e) {}
         this.setState({ rememberedMasterKey: null });
         await this.save();
     }
@@ -773,7 +876,11 @@ export class App {
         const key = base64ToBytes(await keyStoreGet("master_key_encryption_key"));
         await encryptedMasterKey.unlock(key);
         const masterKey = await encryptedMasterKey.getData();
-        await this.account!.unlockWithMasterKey(masterKey);
+        await this.unlockWithMasterKey(masterKey);
+    }
+
+    async unlockWithMasterKey(key: Uint8Array) {
+        await this.account!.unlockWithMasterKey(key);
         await this._unlocked();
     }
 
@@ -796,7 +903,7 @@ export class App {
     }
 
     isMainVault(vault: Vault) {
-        return this.account && this.account.mainVault === vault.id;
+        return vault && this.account && this.account.mainVault === vault.id;
     }
 
     /** Create a new [[Vault]] */
@@ -811,10 +918,27 @@ export class App {
         vault.org = { id: org.id, name: org.name };
         vault = await this.api.createVault(vault);
 
-        await this.fetchOrg(org.id);
         await this.updateOrg(org.id, async (org: Org) => {
-            groups.forEach(({ name, readonly }) => org.getGroup(name)!.vaults.push({ id: vault.id, readonly }));
-            members.forEach(({ id, readonly }) => org.getMember({ id })!.vaults.push({ id: vault.id, readonly }));
+            groups.forEach(({ name, readonly }) => {
+                const group = org.getGroup(name);
+                if (!group) {
+                    setTimeout(() => {
+                        throw `Group not found: ${name}`;
+                    });
+                    return;
+                }
+                group.vaults.push({ id: vault.id, readonly });
+            });
+            members.forEach(({ id, readonly }) => {
+                const member = org.getMember({ id });
+                if (!member) {
+                    setTimeout(() => {
+                        throw `Member not found: ${id}`;
+                    });
+                    return;
+                }
+                member.vaults.push({ id: vault.id, readonly });
+            });
         });
 
         await this.synchronize();
@@ -1108,6 +1232,43 @@ export class App {
         await this.addItems(newItems, target);
         await this.deleteItems(items);
         return newItems;
+    }
+
+    getItemsForHost(host: string) {
+        const items: { vault: Vault; item: VaultItem }[] = [];
+        for (const vault of this.vaults) {
+            for (const item of vault.items) {
+                if (
+                    item.fields.some(field => {
+                        if (field.type !== "url") {
+                            return false;
+                        }
+
+                        // Try to parse host from url. If field value is not a valid URL,
+                        // assume its the bare host name
+                        let h = field.value;
+                        try {
+                            h = new URL(field.value).host;
+                        } catch (e) {}
+
+                        // If host doesn't match exactly, try with/without "www."
+                        return h === host || (host.startsWith("www.") ? host.slice(4) === h : "www." + host === h);
+                    })
+                ) {
+                    items.push({ vault, item });
+                }
+            }
+        }
+        return items;
+    }
+
+    getItemsForUrl(url: string) {
+        try {
+            const { host } = new URL(url);
+            return this.getItemsForHost(host);
+        } catch (e) {
+            return [];
+        }
     }
 
     /*
@@ -1425,8 +1586,14 @@ export class App {
      */
 
     async updateBilling(params: UpdateBillingParams) {
+        params.provider = (this.state.billingProvider && this.state.billingProvider.type) || "";
         await this.api.updateBilling(params);
         params.org ? await this.fetchOrg(params.org) : await this.fetchAccount();
+    }
+
+    async loadBillingProvider() {
+        const providers = await this.api.getBillingProviders();
+        this.setState({ billingProvider: providers[0] || null });
     }
 
     getItemsQuota(vault: Vault = this.mainVault!) {

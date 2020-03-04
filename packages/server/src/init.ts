@@ -1,12 +1,14 @@
 import { Server, ServerConfig } from "@padloc/core/src/server";
 import { setPlatform } from "@padloc/core/src/platform";
 import { BillingProvider } from "@padloc/core/src/billing";
+import { Logger } from "@padloc/core/src/log";
 import { NodePlatform } from "./platform";
 import { HTTPReceiver } from "./http";
 import { LevelDBStorage } from "./storage";
 import { EmailMessenger } from "./messenger";
 import { FileSystemStorage } from "./attachment";
 import { StripeBillingProvider } from "./billing";
+import { ReplServer } from "./repl";
 
 async function init() {
     setPlatform(new NodePlatform());
@@ -14,7 +16,7 @@ async function init() {
     const config = new ServerConfig({
         clientUrl: process.env.PL_PWA_URL || `http://0.0.0.0:${process.env.PL_PWA_PORT || 8080}`,
         reportErrors: process.env.PL_REPORT_ERRORS || "",
-        mfa: (process.env.PL_MFA as ("email" | "none")) || "email",
+        mfa: (process.env.PL_MFA as "email" | "none") || "email",
         accountQuota: {
             items: -1,
             storage: 1,
@@ -35,6 +37,9 @@ async function init() {
         from: process.env.PL_EMAIL_FROM || ""
     });
     const storage = new LevelDBStorage(process.env.PL_DB_PATH || process.env.PL_DATA_DIR || "data");
+
+    const logger = new Logger(new LevelDBStorage(process.env.PL_LOG_DIR || "logs"));
+
     const attachmentStorage = new FileSystemStorage({
         path: process.env.PL_ATTACHMENTS_PATH || process.env.PL_ATTACHMENTS_DIR || "attachments"
     });
@@ -50,8 +55,9 @@ async function init() {
 
         const stripeProvider = new StripeBillingProvider(
             {
-                stripeSecret: process.env.PL_BILLING_STRIPE_SECRET || "",
-                port: billingPort
+                secretKey: process.env.PL_BILLING_STRIPE_SECRET || "",
+                publicKey: process.env.PL_BILLING_STRIPE_PUBLIC_KEY || "",
+                webhookPort: billingPort
             },
             storage
         );
@@ -66,13 +72,18 @@ async function init() {
         port = 3000;
     }
 
-    const server = new Server(config, storage, messenger, attachmentStorage, billingProvider);
+    const server = new Server(config, storage, messenger, logger, attachmentStorage, billingProvider);
 
     console.log(`Starting server on port ${port}`);
     new HTTPReceiver(port).listen(req => server.handle(req));
-    //
-    // console.log(`Starting billing server on port ${billingPort}`);
-    // new HTTPReceiver(billingPort).listen(req => billingProvider.handle(req));
+
+    let replPort = parseInt(process.env.PL_REPL_PORT!);
+    if (!isNaN(replPort)) {
+        console.log(
+            `Starting REPL server on port ${replPort}\n` + "WARNING: Make sure this port is NOT publicly accessible."
+        );
+        new ReplServer(server).start(replPort);
+    }
 }
 
 init();

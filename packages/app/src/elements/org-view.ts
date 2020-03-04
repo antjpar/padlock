@@ -159,9 +159,8 @@ export class OrgView extends StateMixin(View) {
 
         if (deleted) {
             router.go("");
+            alert("Organization deleted successfully.", { type: "success" });
         }
-
-        alert("Organization deleted successfully.", { type: "success" });
     }
 
     private async _changeName() {
@@ -523,7 +522,7 @@ export class OrgView extends StateMixin(View) {
                                   </div>
                               `
                             : ""}
-                        ${app.billingConfig
+                        ${app.billingEnabled
                             ? html`
                                   <h3>${$l("Subscription")}</h3>
 

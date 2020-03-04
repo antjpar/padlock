@@ -13,9 +13,15 @@ packages/cordova/platforms
 packages/cordova/plugins
 packages/cordova/www
 packages/cordova/dist
-data
 packages/electron/build
 packages/electron/app
 packages/electron/dist
 *.env
 packages/pwa/dist
+packages/server/logs
+packages/server/data
+packages/server/attachments
+/logs
+/pwa
+/data
+packages/extension/dist

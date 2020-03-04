@@ -6,6 +6,7 @@ import { Err, ErrorCode } from "@padloc/core/src/error";
 import { Storage } from "@padloc/core/src/storage";
 import {
     BillingProvider,
+    BillingProviderInfo,
     BillingInfo,
     Plan,
     PlanType,
@@ -19,8 +20,9 @@ import {
 import { readBody } from "./http";
 
 export interface StripeConfig {
-    stripeSecret: string;
-    port: number;
+    secretKey: string;
+    publicKey: string;
+    webhookPort: number;
 }
 
 function parsePlan({
@@ -145,7 +147,7 @@ function parseCustomer({
     info.discount =
         (discount &&
             new Discount().fromRaw({
-                name: discount.coupon.name,
+                name: discount.coupon.name || "",
                 coupon: discount.coupon.id
             })) ||
         null;
@@ -158,7 +160,7 @@ export class StripeBillingProvider implements BillingProvider {
     private _availablePlans: Plan[] = [];
 
     constructor(public config: StripeConfig, public storage: Storage) {
-        this._stripe = new Stripe(config.stripeSecret);
+        this._stripe = new Stripe(config.secretKey);
     }
 
     async init() {
@@ -166,7 +168,18 @@ export class StripeBillingProvider implements BillingProvider {
         this._startWebhook();
     }
 
-    async update({ account, org, email, plan, members, paymentMethod, address, coupon, cancel }: UpdateBillingParams) {
+    async update({
+        account,
+        org,
+        email,
+        plan,
+        planType,
+        members,
+        paymentMethod,
+        address,
+        coupon,
+        cancel
+    }: UpdateBillingParams) {
         if (!account && !org) {
             throw new Err(ErrorCode.BAD_REQUEST, "Either 'account' or 'org' parameter required!");
         }
@@ -177,24 +190,32 @@ export class StripeBillingProvider implements BillingProvider {
 
         const info = acc.billing!;
 
-        try {
-            await this._stripe.customers.update(info.customerId, {
-                email,
-                // @ts-ignore
-                name: address && address.name,
-                address: address && {
-                    line1: address.street,
-                    postal_code: address.postalCode,
-                    city: address.city,
-                    country: address.country
-                },
-                source: paymentMethod && paymentMethod.source,
-                coupon: coupon || undefined,
-                // @ts-ignore
-                metadata: { account, org }
-            });
-        } catch (e) {
-            throw new Err(ErrorCode.BILLING_ERROR, e.message);
+        const updatingInfo =
+            typeof email !== "undefined" ||
+            typeof paymentMethod !== "undefined" ||
+            typeof address !== "undefined" ||
+            typeof coupon !== "undefined";
+
+        if (updatingInfo) {
+            try {
+                await this._stripe.customers.update(info.customerId, {
+                    email,
+                    // @ts-ignore
+                    name: (address && address.name) || acc.name,
+                    address: address && {
+                        line1: address.street,
+                        postal_code: address.postalCode,
+                        city: address.city,
+                        country: address.country
+                    },
+                    source: paymentMethod && paymentMethod.source,
+                    coupon: coupon || undefined,
+                    // @ts-ignore
+                    metadata: { account, org }
+                });
+            } catch (e) {
+                throw new Err(ErrorCode.BILLING_ERROR, e.message);
+            }
         }
 
         const params: any = {};
@@ -202,7 +223,13 @@ export class StripeBillingProvider implements BillingProvider {
         if (typeof plan !== "undefined") {
             const planInfo = this._availablePlans.find(p => p.id === plan);
             if (!planInfo) {
-                throw new Err(ErrorCode.BAD_REQUEST, "Invalid plan!");
+                throw new Err(ErrorCode.BAD_REQUEST, "Invalid plan id!");
+            }
+            params.plan = planInfo.id;
+        } else if (typeof planType !== "undefined") {
+            const planInfo = this._availablePlans.find(p => p.type === planType);
+            if (!planInfo) {
+                throw new Err(ErrorCode.BAD_REQUEST, "Invalid plan type!");
             }
             params.plan = planInfo.id;
         }
@@ -215,7 +242,9 @@ export class StripeBillingProvider implements BillingProvider {
             params.cancel_at_period_end = cancel;
         }
 
-        if (Object.keys(params).length) {
+        const updatingPlan = !!Object.keys(params).length;
+
+        if (updatingPlan) {
             try {
                 if (info.subscription) {
                     await this._stripe.subscriptions.update(info.subscription.id, {
@@ -237,7 +266,9 @@ export class StripeBillingProvider implements BillingProvider {
             }
         }
 
-        await this._sync(acc);
+        if (updatingInfo || updatingPlan) {
+            await this._sync(acc);
+        }
 
         const sub = acc.billing && acc.billing.subscription;
 
@@ -323,7 +354,8 @@ export class StripeBillingProvider implements BillingProvider {
         // @ts-ignore
         if (!customer || customer.deleted) {
             customer = await this._stripe.customers.create({
-                // email: acc instanceof Account ? acc.email : undefined,
+                email: acc instanceof Account ? acc.email : undefined,
+                name: acc.name,
                 plan: acc instanceof Account && freePlan ? freePlan.id : undefined,
                 metadata: {
                     account: acc instanceof Account ? acc.id : "",
@@ -334,14 +366,16 @@ export class StripeBillingProvider implements BillingProvider {
 
         acc.billing = parseCustomer(customer);
 
-        // if (acc instanceof Account && !acc.billing!.subscription && freePlan) {
-        //     await this._stripe.subscriptions.create({
-        //         customer: acc.billing!.customerId,
-        //         plan: freePlan.id
-        //     });
-        // }
+        let sub = acc.billing!.subscription;
 
-        const sub = acc.billing.subscription;
+        if (acc instanceof Account && !sub && freePlan) {
+            sub = acc.billing!.subscription = parseSubscription(
+                await this._stripe.subscriptions.create({
+                    customer: customer.id,
+                    plan: freePlan.id
+                })
+            );
+        }
 
         if (sub && sub.status !== SubscriptionStatus.Inactive) {
             if (acc instanceof Account) {
@@ -368,6 +402,16 @@ export class StripeBillingProvider implements BillingProvider {
 
     async getPlans() {
         return [...this._availablePlans.values()];
+    }
+
+    getInfo() {
+        const info = new BillingProviderInfo();
+        info.type = "stripe";
+        info.plans = [...this._availablePlans.values()];
+        info.config = {
+            publicKey: this.config.publicKey
+        };
+        return info;
     }
 
     private async _startWebhook() {
@@ -425,7 +469,7 @@ export class StripeBillingProvider implements BillingProvider {
             httpRes.end();
         });
 
-        server.listen(this.config.port);
+        server.listen(this.config.webhookPort);
     }
 
     private async _loadPlans() {

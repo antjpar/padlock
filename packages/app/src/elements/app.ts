@@ -1,5 +1,5 @@
 import "../../assets/fonts/fonts.css";
-import { Plan } from "@padloc/core/src/billing";
+import { Plan, PlanType } from "@padloc/core/src/billing";
 import { translate as $l } from "@padloc/locale/src/translate";
 import { biometricAuth } from "@padloc/core/src/platform";
 import { config, shared, mixins } from "../styles";
@@ -34,11 +34,21 @@ import { TemplateDialog } from "./template-dialog";
 //     document.addEventListener("deviceready", resolve);
 // });
 
-class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseElement))))) {
+export class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseElement))))) {
     @property()
     locked = true;
     @property()
     loggedIn = false;
+
+    @property({ type: Boolean, reflect: true, attribute: "singleton-container" })
+    readonly singletonContainer = true;
+
+    get router() {
+        return router;
+    }
+
+    @property()
+    protected _ready = false;
 
     @query("pl-start")
     private _startView: Start;
@@ -80,8 +90,22 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
     @property({ reflect: true, attribute: "menu-open" })
     private _menuOpen: boolean = false;
 
-    async firstUpdated() {
+    shouldUpdate() {
+        return this._ready;
+    }
+
+    constructor() {
+        super();
+        this.load();
+    }
+
+    async load() {
         await app.loaded;
+        // Try syncing account so user can unlock with new password in case it has changed
+        if (app.state.loggedIn) {
+            app.fetchAccount();
+        }
+        this._ready = true;
         this._routeChanged();
         const spinner = document.querySelector(".spinner") as HTMLElement;
         spinner.style.display = "none";
@@ -305,19 +329,46 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
     updated(changes: Map<string, any>) {
         if (changes.has("locked")) {
             if (this.locked) {
-                this.$(".wrapper").classList.remove("active");
-                this._inviteDialog.open = false;
-                clearDialogs();
-                clearClipboard();
-                this._routeChanged();
+                this._locked();
             } else {
-                setTimeout(() => {
-                    this.$(".wrapper").classList.add("active");
-                    router.go(router.params.next || "", {}, true);
-                }, 600);
+                this._unlocked();
+            }
+        }
+
+        if (changes.has("loggedIn")) {
+            if (this.loggedIn) {
+                this._loggedIn();
+            } else {
+                this._loggedOut();
             }
         }
     }
+
+    protected _locked() {
+        this.$(".wrapper").classList.remove("active");
+        clearDialogs();
+        clearClipboard();
+        this._routeChanged();
+    }
+
+    protected _unlocked(instant = false) {
+        setTimeout(
+            async () => {
+                if (!this.$(".wrapper")) {
+                    await this.updateComplete;
+                }
+
+                this.$(".wrapper").classList.add("active");
+                if (typeof router.params.next !== "undefined") {
+                    router.go(router.params.next, {}, true);
+                }
+            },
+            instant ? 0 : 600
+        );
+    }
+
+    protected _loggedIn() {}
+    protected _loggedOut() {}
 
     @listen("toggle-menu")
     _toggleMenu() {
@@ -346,6 +397,10 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
 
     @listen("route-changed", router)
     async _routeChanged() {
+        if (!this._ready) {
+            return;
+        }
+
         Dialog.closeAll();
 
         await app.loaded;
@@ -413,13 +468,14 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
         } else if ((match = path.match(/^items(?:\/([^\/]+))?$/))) {
             const [, id] = match;
 
-            const { vault, tag, favorites, attachments, recent } = router.params;
+            const { vault, tag, favorites, attachments, recent, host } = router.params;
             this._items.selected = id || "";
             this._items.vault = vault || "";
             this._items.tag = tag || "";
             this._items.favorites = favorites === "true";
             this._items.attachments = attachments === "true";
             this._items.recent = recent === "true";
+            this._items.host = host === "true";
             this._openView(this._items);
 
             this._menu.selected = vault
@@ -432,6 +488,8 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
                 ? "recent"
                 : attachments
                 ? "attachments"
+                : host
+                ? "host"
                 : "items";
 
             const item = id && app.getItem(id);
@@ -460,6 +518,30 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
             } else {
                 await alert($l("Could not find invite! Did you use the correct link?"), { type: "warning" });
                 router.go("items", undefined, true);
+            }
+        } else if ((match = path.match(/^plans?\/(.+)\/?$/))) {
+            const billingProvider = app.state.billingProvider;
+            if (!billingProvider) {
+                router.go("items", undefined, true);
+                return;
+            }
+
+            const planType = parseInt(match[1]);
+            if (planType === PlanType.Premium) {
+                await this._premiumDialog.show();
+                router.go("items", undefined, true);
+            } else {
+                const plan = billingProvider!.plans.find(p => p.type === planType);
+                if (plan && plan.type !== PlanType.Free) {
+                    const org = await this._createOrgDialog.show(plan);
+                    if (org) {
+                        router.go(`orgs/${org.id}`);
+                    } else {
+                        router.go("items", undefined, true);
+                    }
+                } else {
+                    router.go("items", undefined, true);
+                }
             }
         } else {
             router.go("items", undefined, true);
@@ -557,7 +639,7 @@ class App extends ServiceWorker(StateMixin(AutoSync(ErrorHandling(AutoLock(BaseE
     async _createOrg() {
         let plan: Plan | null = null;
 
-        if (app.billingConfig) {
+        if (app.billingEnabled) {
             plan = await this._choosePlanDialog.show();
             if (!plan) {
                 return;

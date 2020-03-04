@@ -2,7 +2,7 @@ import { translate as $l } from "@padloc/locale/src/translate";
 import { Org } from "@padloc/core/src/org";
 import { PlanType, SubscriptionStatus, UpdateBillingParams } from "@padloc/core/src/billing";
 import { shared } from "../styles";
-import { dialog, alert, choose } from "../lib/dialog";
+import { dialog, alert, choose, confirm } from "../lib/dialog";
 import { fileSize, loadScript } from "../lib/util";
 import { app } from "../globals";
 import { StateMixin } from "../mixins/state";
@@ -31,6 +31,9 @@ export class OrgSubscription extends StateMixin(BaseElement) {
 
     @query("#authButton")
     private _authButton: LoadingButton;
+
+    @query("#downgradeButton")
+    private _downgradeButton: LoadingButton;
 
     private get _billing() {
         return this.org ? this.org.billing : app.account && app.account.billing;
@@ -74,6 +77,36 @@ export class OrgSubscription extends StateMixin(BaseElement) {
 
     private _updatePlan() {
         this.org ? this._updateSubscriptionDialog.show(this.org) : this.dispatch("get-premium");
+    }
+
+    private async _downgrade() {
+        if (this.org) {
+            throw "Can only downgrade subscription for private account!";
+        }
+
+        if (this._downgradeButton.state === "loading") {
+            return;
+        }
+
+        const confirmed = await confirm(
+            $l("Are you sure you want to downgrade to the Free Plan?"),
+            $l("Downgrade"),
+            $l("Cancel"),
+            { type: "destructive", title: "Downgrade" }
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        this._downgradeButton.start();
+        try {
+            await app.updateBilling(new UpdateBillingParams({ planType: PlanType.Free }));
+            this._downgradeButton.success();
+        } catch (e) {
+            this._downgradeButton.fail();
+            alert(e.message || $l("Something went wrong. Please try again later!"), { type: "warning" });
+        }
     }
 
     private async _updateBilling() {
@@ -125,7 +158,7 @@ export class OrgSubscription extends StateMixin(BaseElement) {
     }
 
     private async _authenticatePayment() {
-        const stripePubKey = app.billingConfig && app.billingConfig.stripePublicKey;
+        const stripePubKey = app.state.billingProvider && app.state.billingProvider.config.publicKey;
 
         if (!stripePubKey || this._authButton.state === "loading") {
             return;
@@ -238,7 +271,8 @@ export class OrgSubscription extends StateMixin(BaseElement) {
                 ? Math.max(0, Math.ceil((sub.periodEnd.getTime() - Date.now()) / 1000 / 60 / 60 / 24))
                 : 0;
 
-        const itemCount = (app.mainVault && app.mainVault.items.size) || 0;
+        const privateItemQuota = app.getItemsQuota();
+        const privateItemCount = (app.mainVault && app.mainVault.items.size) || 0;
 
         return html`
             <div class="plan-name">
@@ -286,14 +320,14 @@ export class OrgSubscription extends StateMixin(BaseElement) {
                     : html`
                           <div
                               class="quota-item"
-                              ?warning=${account.quota.items !== -1 && itemCount >= account.quota.items}
+                              ?warning=${privateItemQuota !== -1 && privateItemCount >= privateItemQuota}
                           >
                               <pl-icon icon="list"></pl-icon>
 
                               <div class="label">
-                                  ${account.quota.items === -1
+                                  ${privateItemQuota === -1
                                       ? $l("Unlimited")
-                                      : `${itemCount} / ${account.quota.items}`}
+                                      : `${privateItemCount} / ${privateItemQuota}`}
                               </div>
                           </div>
 
@@ -378,6 +412,10 @@ export class OrgSubscription extends StateMixin(BaseElement) {
                           @click=${this._updateBilling}
                       >
                           ${$l("Add Payment Method")}
+                      </pl-loading-button>
+
+                      <pl-loading-button id="downgradeButton" class="premium-button tap" @click=${this._downgrade}>
+                          ${$l("Downgrade To Free Plan")}
                       </pl-loading-button>
                   `
                 : this.org || sub.plan.type !== PlanType.Free

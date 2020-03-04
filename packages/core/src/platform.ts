@@ -3,6 +3,7 @@ import { Serializable } from "./encoding";
 import { CryptoProvider } from "./crypto";
 import { Err, ErrorCode } from "./error";
 import { StubCryptoProvider } from "./stub-crypto-provider";
+import { Storage, MemoryStorage } from "./storage";
 
 /**
  * Object representing all information available for a given device.
@@ -43,18 +44,32 @@ export class DeviceInfo extends Serializable {
         return this.browser ? $l("{0} on {1}", this.browser, this.platform) : $l("{0} Device", this.platform);
     }
 
-    validate() {
-        return (
-            typeof this.platform === "string" &&
-            typeof this.osVersion === "string" &&
-            typeof this.id === "string" &&
-            typeof this.appVersion === "string" &&
-            typeof this.userAgent === "string" &&
-            typeof this.locale === "string" &&
-            typeof this.manufacturer === "string" &&
-            typeof this.model === "string" &&
-            typeof this.browser === "string"
-        );
+    fromRaw({
+        platform,
+        osVersion,
+        id,
+        appVersion,
+        userAgent,
+        locale,
+        manufacturer,
+        model,
+        browser,
+        supportsBioAuth,
+        supportsKeyStore
+    }: any) {
+        return super.fromRaw({
+            platform,
+            osVersion,
+            id,
+            appVersion,
+            userAgent,
+            locale,
+            manufacturer,
+            model,
+            browser,
+            supportsBioAuth,
+            supportsKeyStore
+        });
     }
 
     constructor(props?: Partial<DeviceInfo>) {
@@ -78,6 +93,8 @@ export interface Platform {
 
     crypto: CryptoProvider;
 
+    storage: Storage;
+
     scanQR(): Promise<string>;
     stopScanQR(): Promise<void>;
 
@@ -99,6 +116,7 @@ export interface Platform {
  */
 export class StubPlatform implements Platform {
     crypto = new StubCryptoProvider();
+    storage: Storage = new MemoryStorage();
 
     async setClipboard(_val: string) {
         throw new Err(ErrorCode.NOT_SUPPORTED);
@@ -164,6 +182,13 @@ export function setPlatform(p: Platform) {
     platform = p;
 }
 
+/**
+ * Get the current [[Platform]] implemenation
+ */
+export function getPlatform() {
+    return platform;
+}
+
 /** Copies the given `text` to the system clipboard */
 export function getClipboard() {
     return platform.getClipboard();
@@ -181,6 +206,10 @@ export function getDeviceInfo() {
 
 export function getCryptoProvider() {
     return platform.crypto;
+}
+
+export function getStorage() {
+    return platform.storage;
 }
 
 export function scanQR() {

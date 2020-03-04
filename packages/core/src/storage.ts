@@ -14,6 +14,15 @@ export abstract class Storable extends Serializable {
  */
 export type StorableConstructor<T extends Storable> = new (...args: any[]) => T;
 
+export interface StorageListOptions<T> {
+    offset?: number;
+    limit?: number;
+    filter?: (obj: T) => boolean;
+    lt?: string;
+    gt?: string;
+    reverse?: boolean;
+}
+
 /**
  * Generic interface for data storage
  */
@@ -29,6 +38,21 @@ export interface Storage {
 
     /** Deletes all data in this storage */
     clear(): Promise<void>;
+
+    /** Retrieves an object of type `T` based on its `id`*/
+    list<T extends Storable>(cls: StorableConstructor<T>, opts?: StorageListOptions<T>): Promise<T[]>;
+}
+
+export class VoidStorage implements Storage {
+    async save<T extends Storable>(_obj: T) {}
+    async get<T extends Storable>(_cls: StorableConstructor<T> | T, _id: string): Promise<T> {
+        throw new Err(ErrorCode.NOT_FOUND);
+    }
+    async delete<T extends Storable>(_obj: T) {}
+    async clear() {}
+    async list<T extends Storable>(_cls: StorableConstructor<T>, _opts?: StorageListOptions<T>) {
+        return [];
+    }
 }
 
 /**
@@ -56,5 +80,38 @@ export class MemoryStorage implements Storage {
 
     async clear() {
         this._storage.clear();
+    }
+
+    async list<T extends Storable>(
+        cls: StorableConstructor<T>,
+        { offset = 0, limit = Infinity, filter }: StorageListOptions<T> = {}
+    ): Promise<T[]> {
+        const results: T[] = [];
+
+        const iter = this._storage[Symbol.iterator]();
+
+        let value: object;
+        let done: boolean | undefined;
+
+        while (
+            (({
+                value: [, value],
+                done
+            } = iter.next()),
+            !done && results.length < limit)
+        ) {
+            const item = new cls().fromRaw(value);
+            if (!filter || filter(item)) {
+                if (!filter || filter(item)) {
+                    if (offset) {
+                        offset--;
+                    } else {
+                        results.push(item);
+                    }
+                }
+            }
+        }
+
+        return results;
     }
 }

@@ -37,7 +37,7 @@ export class FieldElement extends BaseElement {
     }
 
     private get _fieldActions() {
-        const actions = [{ icon: "copy", action: () => this.dispatch("copy") }];
+        const actions = [{ icon: "copy", action: () => this.dispatch("copy-clipboard") }];
 
         if (this._fieldDef.mask) {
             actions.push({ icon: this._masked ? "show" : "hide", action: () => this._masked = !this._masked });
@@ -121,8 +121,9 @@ export class FieldElement extends BaseElement {
             }
 
             .value-display {
-                white-space: normal;
+                white-space: pre-wrap;
                 overflow-wrap: break-word;
+                user-select: text;
             }
 
             .fields-container {
@@ -141,6 +142,9 @@ export class FieldElement extends BaseElement {
                 height: auto;
                 box-sizing: border-box;
                 background: none;
+            }
+
+            .value-input {
                 border: dashed 1px var(--color-shade-2);
             }
 
@@ -190,7 +194,7 @@ export class FieldElement extends BaseElement {
                 return html`
                     <pl-textarea
                         class="value-input"
-                        .placeholder=${$l("Enter Field Value")}
+                        .placeholder=${$l("Enter Notes Here")}
                         @input=${() => (this.value = this._valueInput.value)}
                         autosize
                         .value=${this.value}
@@ -245,7 +249,7 @@ export class FieldElement extends BaseElement {
                 return html`
                     <pl-input
                         class="value-input"
-                        .placeholder=${$l("Enter Field Value")}
+                        .placeholder=${$l("Enter Value Here")}
                         .type=${inputType}
                         .pattern=${this._fieldDef.pattern}
                         @input=${() => (this.value = this._valueInput.value)}

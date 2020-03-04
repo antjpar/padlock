@@ -95,7 +95,7 @@ export class ItemDialog extends Dialog<string, void> {
     async addAttachment() {
         await this.updateComplete;
 
-        if (this._vault!.id === app.mainVault!.id && !app.account!.quota.storage && app.billingConfig) {
+        if (this._vault!.id === app.mainVault!.id && !app.account!.quota.storage && app.billingEnabled) {
             this.dispatch("get-premium", {
                 message: $l("Upgrade to Premium now and get 1GB of encrypted file storage!"),
                 icon: "storage"
@@ -340,7 +340,7 @@ export class ItemDialog extends Dialog<string, void> {
                             .type=${field.type}
                             .editing=${this._editing}
                             @edit=${() => this._editField(index)}
-                            @copy=${() => setClipboard(this._item!, field)}
+                            @copy-clipboard=${() => setClipboard(this._item!, field)}
                             @remove=${() => this._removeField(index)}
                             @generate=${() => this._generateValue(index)}
                             @get-totp-qr=${() => this._getTotpQR(index)}
